@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS: Settings = {
   fallback: {
     model: "",
     api: "",
+    baseUrl: "",
   },
   timezone: "UTC",
   timezoneOffsetMinutes: 0,
@@ -85,6 +86,7 @@ export interface Settings {
 export interface ModelConfig {
   model: string;
   api: string;
+  baseUrl: string;
 }
 
 export interface WebConfig {
@@ -136,6 +138,7 @@ function parseSettings(raw: Record<string, any>, discordUserIds?: string[]): Set
     fallback: {
       model: typeof raw.fallback?.model === "string" ? raw.fallback.model.trim() : "",
       api: typeof raw.fallback?.api === "string" ? raw.fallback.api.trim() : "",
+      baseUrl: typeof raw.fallback?.baseUrl === "string" ? raw.fallback.baseUrl.trim() : "",
     },
     timezone: parsedTimezone,
     timezoneOffsetMinutes: parseTimezoneOffsetMinutes(raw.timezoneOffsetMinutes, parsedTimezone),

@@ -45,11 +45,13 @@ function extractRateLimitMessage(stdout: string, stderr: string): string | null 
 }
 
 function sameModelConfig(a: ModelConfig, b: ModelConfig): boolean {
-  return a.model.trim().toLowerCase() === b.model.trim().toLowerCase() && a.api.trim() === b.api.trim();
+  return a.model.trim().toLowerCase() === b.model.trim().toLowerCase()
+    && a.api.trim() === b.api.trim()
+    && a.baseUrl.trim() === b.baseUrl.trim();
 }
 
 function hasModelConfig(value: ModelConfig): boolean {
-  return value.model.trim().length > 0 || value.api.trim().length > 0;
+  return value.model.trim().length > 0 || value.api.trim().length > 0 || value.baseUrl.trim().length > 0;
 }
 
 function isNotFoundError(error: unknown): boolean {
@@ -60,15 +62,29 @@ function isNotFoundError(error: unknown): boolean {
   return /enoent|no such file or directory/i.test(message);
 }
 
-function buildChildEnv(baseEnv: Record<string, string>, model: string, api: string): Record<string, string> {
+/** Well-known model providers with predefined base URLs. */
+const KNOWN_PROVIDERS: Record<string, { baseUrl: string; extraEnv?: Record<string, string> }> = {
+  glm: {
+    baseUrl: "https://api.z.ai/api/anthropic",
+    extraEnv: { API_TIMEOUT_MS: "3000000" },
+  },
+};
+
+function buildChildEnv(baseEnv: Record<string, string>, model: string, api: string, baseUrl: string): Record<string, string> {
   const childEnv: Record<string, string> = { ...baseEnv };
   const normalizedModel = model.trim().toLowerCase();
 
   if (api.trim()) childEnv.ANTHROPIC_AUTH_TOKEN = api.trim();
 
-  if (normalizedModel === "glm") {
-    childEnv.ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic";
-    childEnv.API_TIMEOUT_MS = "3000000";
+  // Explicit baseUrl from config takes priority over known-provider defaults
+  const provider = KNOWN_PROVIDERS[normalizedModel];
+  const effectiveBaseUrl = baseUrl.trim() || provider?.baseUrl || "";
+
+  if (effectiveBaseUrl) {
+    childEnv.ANTHROPIC_BASE_URL = effectiveBaseUrl;
+  }
+  if (provider?.extraEnv) {
+    Object.assign(childEnv, provider.extraEnv);
   }
 
   return childEnv;
@@ -78,16 +94,19 @@ async function runClaudeOnce(
   baseArgs: string[],
   model: string,
   api: string,
+  baseUrl: string,
   baseEnv: Record<string, string>
 ): Promise<{ rawStdout: string; stderr: string; exitCode: number }> {
   const args = [...baseArgs];
   const normalizedModel = model.trim().toLowerCase();
-  if (model.trim() && normalizedModel !== "glm") args.push("--model", model.trim());
+  // Skip --model when using a known provider or custom baseUrl (proxy handles model routing)
+  const hasCustomEndpoint = baseUrl.trim() || KNOWN_PROVIDERS[normalizedModel];
+  if (model.trim() && !hasCustomEndpoint) args.push("--model", model.trim());
 
   const proc = Bun.spawn(args, {
     stdout: "pipe",
     stderr: "pipe",
-    env: buildChildEnv(baseEnv, model, api),
+    env: buildChildEnv(baseEnv, model, api, baseUrl),
   });
 
   const [rawStdout, stderr] = await Promise.all([
@@ -234,10 +253,11 @@ async function execClaude(name: string, prompt: string): Promise<RunResult> {
   const logFile = join(LOGS_DIR, `${name}-${timestamp}.log`);
 
   const { security, model, api, fallback } = getSettings();
-  const primaryConfig: ModelConfig = { model, api };
+  const primaryConfig: ModelConfig = { model, api, baseUrl: "" };
   const fallbackConfig: ModelConfig = {
     model: fallback?.model ?? "",
     api: fallback?.api ?? "",
+    baseUrl: fallback?.baseUrl ?? "",
   };
   const securityArgs = buildSecurityArgs(security);
 
@@ -282,7 +302,7 @@ async function execClaude(name: string, prompt: string): Promise<RunResult> {
   const { CLAUDECODE: _, ...cleanEnv } = process.env;
   const baseEnv = { ...cleanEnv } as Record<string, string>;
 
-  let exec = await runClaudeOnce(args, primaryConfig.model, primaryConfig.api, baseEnv);
+  let exec = await runClaudeOnce(args, primaryConfig.model, primaryConfig.api, primaryConfig.baseUrl, baseEnv);
   const primaryRateLimit = extractRateLimitMessage(exec.rawStdout, exec.stderr);
   let usedFallback = false;
 
@@ -290,7 +310,7 @@ async function execClaude(name: string, prompt: string): Promise<RunResult> {
     console.warn(
       `[${new Date().toLocaleTimeString()}] Claude limit reached; retrying with fallback${fallbackConfig.model ? ` (${fallbackConfig.model})` : ""}...`
     );
-    exec = await runClaudeOnce(args, fallbackConfig.model, fallbackConfig.api, baseEnv);
+    exec = await runClaudeOnce(args, fallbackConfig.model, fallbackConfig.api, fallbackConfig.baseUrl, baseEnv);
     usedFallback = true;
   }
 
