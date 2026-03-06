@@ -285,11 +285,6 @@ async function registerSlashCommands(token: string): Promise<void> {
 
   const commands = [
     {
-      name: "start",
-      description: "Show welcome message and usage instructions",
-      type: 1,
-    },
-    {
       name: "reset",
       description: "Reset the global session for a fresh start",
       type: 1,
@@ -302,6 +297,16 @@ async function registerSlashCommands(token: string): Promise<void> {
     {
       name: "unlisten",
       description: "Stop auto-responding in this channel (require @mention again)",
+      type: 1,
+    },
+    {
+      name: "stop",
+      description: "Stop the ClaudeClaw daemon gracefully",
+      type: 1,
+    },
+    {
+      name: "restart",
+      description: "Restart the ClaudeClaw daemon",
       type: 1,
     },
   ];
@@ -481,13 +486,6 @@ async function handleInteractionCreate(token: string, interaction: DiscordIntera
 
   // Slash commands (type 2)
   if (interaction.type === 2 && interaction.data?.name) {
-    if (interaction.data.name === "start") {
-      await respondToInteraction(interaction, {
-        content: "Hello! Send me a message and I'll respond using Claude.\nUse `/reset` to start a fresh session.",
-      });
-      return;
-    }
-
     if (interaction.data.name === "reset") {
       await resetSession();
       await respondToInteraction(interaction, {
@@ -541,6 +539,32 @@ async function handleInteractionCreate(token: string, interaction: DiscordIntera
       await respondToInteraction(interaction, {
         content: "Stopped listening. @mention or reply required again.",
       });
+      return;
+    }
+
+    if (interaction.data.name === "stop") {
+      await respondToInteraction(interaction, { content: "Shutting down... goodbye!" });
+      console.log(`[Discord] /stop issued by ${actorId}`);
+      setTimeout(() => process.kill(process.pid, "SIGTERM"), 500);
+      return;
+    }
+
+    if (interaction.data.name === "restart") {
+      await respondToInteraction(interaction, { content: "Restarting..." });
+      console.log(`[Discord] /restart issued by ${actorId}`);
+      const entryPoint = join(import.meta.dir, "..", "index.ts");
+      const logPath = join(process.cwd(), ".claude", "claudeclaw", "logs", "daemon.log");
+      const logFile = Bun.file(logPath);
+      const child = Bun.spawn(
+        [process.execPath, "run", entryPoint, "start", "--web", "--replace-existing"],
+        {
+          cwd: process.cwd(),
+          stdin: "ignore",
+          stdout: logFile,
+          stderr: logFile,
+        },
+      );
+      child.unref();
       return;
     }
 
