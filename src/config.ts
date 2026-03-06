@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS: Settings = {
     forwardToTelegram: true,
   },
   telegram: { token: "", allowedUserIds: [] },
-  discord: { token: "", allowedUserIds: [] },
+  discord: { token: "", allowedUserIds: [], alwaysRespondChannelIds: [] },
   security: { level: "moderate", allowedTools: [], disallowedTools: [] },
   web: { enabled: false, host: "127.0.0.1", port: 4632 },
   stt: { baseUrl: "", model: "" },
@@ -53,6 +53,7 @@ export interface TelegramConfig {
 export interface DiscordConfig {
   token: string;
   allowedUserIds: string[]; // Discord snowflake IDs exceed Number.MAX_SAFE_INTEGER
+  alwaysRespondChannelIds: string[]; // Channels where the bot responds without @mention
 }
 
 export type SecurityLevel =
@@ -156,6 +157,9 @@ function parseSettings(raw: Record<string, any>, discordUserIds?: string[]): Set
         : Array.isArray(raw.discord?.allowedUserIds)
           ? raw.discord.allowedUserIds.map(String)
           : [],
+      alwaysRespondChannelIds: Array.isArray(raw.discord?.alwaysRespondChannelIds)
+        ? raw.discord.alwaysRespondChannelIds.map(String)
+        : [],
     },
     security: {
       level,
@@ -250,6 +254,16 @@ export async function reloadSettings(): Promise<Settings> {
 
 export function getSettings(): Settings {
   if (!cached) throw new Error("Settings not loaded. Call loadSettings() first.");
+  return cached;
+}
+
+/** Update a specific key in settings.json and reload cache. */
+export async function updateSettings(updater: (raw: Record<string, any>) => void): Promise<Settings> {
+  const rawText = await Bun.file(SETTINGS_FILE).text();
+  const raw = JSON.parse(rawText);
+  updater(raw);
+  await Bun.write(SETTINGS_FILE, JSON.stringify(raw, null, 2) + "\n");
+  cached = parseSettings(raw, extractDiscordUserIds(JSON.stringify(raw)));
   return cached;
 }
 

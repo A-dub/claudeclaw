@@ -29,7 +29,9 @@ let queue: Promise<unknown> = Promise.resolve();
 
 function enqueue<T>(fn: () => Promise<T>): Promise<T> {
   const task = queue.then(fn, fn);
-  queue = task.catch(() => {});
+  queue = task.catch((err) => {
+    console.error(`[${new Date().toLocaleTimeString()}] Runner queue error:`, err);
+  });
   return task;
 }
 

@@ -1,5 +1,5 @@
 import { ensureProjectClaudeMd, run, runUserMessage } from "../runner";
-import { getSettings, loadSettings } from "../config";
+import { getSettings, loadSettings, updateSettings } from "../config";
 import { resetSession } from "../sessions";
 import { transcribeAudioToText } from "../whisper";
 import { mkdir } from "node:fs/promises";
@@ -239,6 +239,10 @@ function guildTriggerReason(message: DiscordMessage): string | null {
   // Mention in content (fallback)
   if (botUserId && message.content.includes(`<@${botUserId}>`)) return "mention_in_content";
 
+  // Always-respond channels (no mention required)
+  const config = getSettings().discord;
+  if (config.alwaysRespondChannelIds.includes(message.channel_id)) return "always_respond_channel";
+
   return null;
 }
 
@@ -288,6 +292,16 @@ async function registerSlashCommands(token: string): Promise<void> {
     {
       name: "reset",
       description: "Reset the global session for a fresh start",
+      type: 1,
+    },
+    {
+      name: "listen",
+      description: "Always respond in this channel without @mention",
+      type: 1,
+    },
+    {
+      name: "unlisten",
+      description: "Stop auto-responding in this channel (require @mention again)",
       type: 1,
     },
   ];
@@ -478,6 +492,54 @@ async function handleInteractionCreate(token: string, interaction: DiscordIntera
       await resetSession();
       await respondToInteraction(interaction, {
         content: "Global session reset. Next message starts fresh.",
+      });
+      return;
+    }
+
+    if (interaction.data.name === "listen") {
+      const channelId = interaction.channel_id;
+      if (!channelId) {
+        await respondToInteraction(interaction, { content: "Could not determine channel.", flags: 64 });
+        return;
+      }
+      const config = getSettings().discord;
+      if (config.alwaysRespondChannelIds.includes(channelId)) {
+        await respondToInteraction(interaction, { content: "Already listening in this channel." });
+        return;
+      }
+      await updateSettings((raw) => {
+        if (!Array.isArray(raw.discord?.alwaysRespondChannelIds)) {
+          raw.discord = raw.discord || {};
+          raw.discord.alwaysRespondChannelIds = [];
+        }
+        raw.discord.alwaysRespondChannelIds.push(channelId);
+      });
+      await respondToInteraction(interaction, {
+        content: "Now listening in this channel — no @mention needed.",
+      });
+      return;
+    }
+
+    if (interaction.data.name === "unlisten") {
+      const channelId = interaction.channel_id;
+      if (!channelId) {
+        await respondToInteraction(interaction, { content: "Could not determine channel.", flags: 64 });
+        return;
+      }
+      const config = getSettings().discord;
+      if (!config.alwaysRespondChannelIds.includes(channelId)) {
+        await respondToInteraction(interaction, { content: "Not listening in this channel." });
+        return;
+      }
+      await updateSettings((raw) => {
+        if (Array.isArray(raw.discord?.alwaysRespondChannelIds)) {
+          raw.discord.alwaysRespondChannelIds = raw.discord.alwaysRespondChannelIds.filter(
+            (id: string) => String(id) !== channelId,
+          );
+        }
+      });
+      await respondToInteraction(interaction, {
+        content: "Stopped listening. @mention or reply required again.",
       });
       return;
     }
@@ -803,6 +865,14 @@ process.on("SIGTERM", () => {
 });
 process.on("SIGINT", () => {
   stopGateway();
+});
+process.on("unhandledRejection", (err) => {
+  console.error("[Discord] Unhandled rejection:", err);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[Discord] Uncaught exception:", err);
+  stopGateway();
+  process.exit(1);
 });
 
 /** Start gateway connection in-process (called by start.ts when token is configured) */

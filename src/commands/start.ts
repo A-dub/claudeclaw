@@ -569,6 +569,9 @@ export async function start(args: string[] = []) {
             forwardToTelegram("", r);
             forwardToDiscord("", r);
           }
+        })
+        .catch((err) => {
+          console.error(`[${ts()}] Heartbeat failed:`, err);
         });
       nextHeartbeatAt = nextAllowedHeartbeatAt(
         currentSettings.heartbeat,
