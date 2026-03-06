@@ -4,6 +4,7 @@ import { clear } from "./commands/clear";
 import { status } from "./commands/status";
 import { telegram } from "./commands/telegram";
 import { discord } from "./commands/discord";
+import { matrix } from "./commands/matrix";
 import { send } from "./commands/send";
 
 const args = process.argv.slice(2);
@@ -23,6 +24,8 @@ if (command === "--stop-all") {
   telegram();
 } else if (command === "discord") {
   discord();
+} else if (command === "matrix") {
+  matrix();
 } else if (command === "send") {
   send(args.slice(1));
 } else {

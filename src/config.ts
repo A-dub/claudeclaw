@@ -27,6 +27,7 @@ const DEFAULT_SETTINGS: Settings = {
   },
   telegram: { token: "", allowedUserIds: [] },
   discord: { token: "", allowedUserIds: [], alwaysRespondChannelIds: [] },
+  matrix: { homeserverUrl: "", accessToken: "", allowedUserIds: [], alwaysRespondRoomIds: [] },
   security: { level: "moderate", allowedTools: [], disallowedTools: [] },
   web: { enabled: false, host: "127.0.0.1", port: 4632 },
   stt: { baseUrl: "", model: "" },
@@ -57,6 +58,13 @@ export interface DiscordConfig {
   alwaysRespondChannelIds: string[]; // Channels where the bot responds without @mention
 }
 
+export interface MatrixConfig {
+  homeserverUrl: string;
+  accessToken: string;
+  allowedUserIds: string[]; // Matrix user IDs (e.g. @ad:chat.6047.in)
+  alwaysRespondRoomIds: string[]; // Rooms where the bot responds without mention
+}
+
 export type SecurityLevel =
   | "locked"
   | "strict"
@@ -78,6 +86,7 @@ export interface Settings {
   heartbeat: HeartbeatConfig;
   telegram: TelegramConfig;
   discord: DiscordConfig;
+  matrix: MatrixConfig;
   security: SecurityConfig;
   web: WebConfig;
   stt: SttConfig;
@@ -162,6 +171,16 @@ function parseSettings(raw: Record<string, any>, discordUserIds?: string[]): Set
           : [],
       alwaysRespondChannelIds: Array.isArray(raw.discord?.alwaysRespondChannelIds)
         ? raw.discord.alwaysRespondChannelIds.map(String)
+        : [],
+    },
+    matrix: {
+      homeserverUrl: typeof raw.matrix?.homeserverUrl === "string" ? raw.matrix.homeserverUrl.trim() : "",
+      accessToken: typeof raw.matrix?.accessToken === "string" ? raw.matrix.accessToken.trim() : "",
+      allowedUserIds: Array.isArray(raw.matrix?.allowedUserIds)
+        ? raw.matrix.allowedUserIds.map(String)
+        : [],
+      alwaysRespondRoomIds: Array.isArray(raw.matrix?.alwaysRespondRoomIds)
+        ? raw.matrix.alwaysRespondRoomIds.map(String)
         : [],
     },
     security: {
