@@ -71,7 +71,11 @@ Start the heartbeat daemon for this project. Follow these steps exactly:
 
    - **Model**: Set `model` in settings to their choice (e.g. `"opus"`, `"sonnet"`, `"haiku"`, `"glm"`). Default is `"opus"` if they don't pick.
    - **If model is `glm`**: Ask in normal free-form text for API token and set top-level `api` to that value (optional; user can skip). Only ask this token question when the selected model is `glm`.
-   - Ask whether to enable GLM fallback (kicks in automatically when your Claude token limit is hit). The fallback model is always `glm` — no other model is supported. Use AskUserQuestion: "Enable GLM fallback? Automatically switches to GLM when your Claude limit is hit." (header: "Fallback", options: "Yes — enable GLM fallback", "Skip"). If yes, ask in normal free-form text for the GLM API token (optional, user can skip). Set `fallback.model` to `"glm"` and `fallback.api` to the token if provided.
+   - Ask whether to enable a fallback provider (kicks in automatically when your Claude token limit is hit). Use AskUserQuestion: "Enable a fallback provider? Automatically switches when your Claude limit is hit." (header: "Fallback", options: "GLM fallback", "OpenAI fallback", "Custom provider", "Skip").
+     - **If GLM**: Ask in normal free-form text for the GLM API token (optional, user can skip). Set `fallback.model` to `"glm"` and `fallback.api` to the token if provided. Leave `fallback.baseUrl` empty (the built-in GLM URL is used automatically).
+     - **If OpenAI**: Ask in normal free-form text for: (1) the OpenAI-compatible base URL (e.g. `http://localhost:4000/v1` for LiteLLM proxy, or any Anthropic-compatible translation layer), (2) the API token, and (3) the model name (e.g. `gpt-4o`). Set `fallback.model`, `fallback.api`, and `fallback.baseUrl` accordingly. Note: OpenAI requires an Anthropic-to-OpenAI translation proxy (like LiteLLM) since Claude Code speaks the Anthropic API format.
+     - **If Custom provider**: Ask in normal free-form text for: (1) the base URL of the Anthropic-compatible endpoint, (2) the API token, and (3) the model name. Set `fallback.model`, `fallback.api`, and `fallback.baseUrl` accordingly.
+     - **If Skip**: Leave fallback unconfigured.
 
    - **If yes to heartbeat**: Use AskUserQuestion again with one question:
      - "How often should it run in minutes?" (header: "Interval", options: "5", "15", "30 (Recommended)", "60")
@@ -166,7 +170,8 @@ Defaults: `WEB_HOST=127.0.0.1`, `WEB_PORT=4632` unless changed via settings or `
   "api": "",
   "fallback": {
     "model": "glm",
-    "api": ""
+    "api": "",
+    "baseUrl": ""
   },
   "timezone": "UTC+0",
   "heartbeat": {
@@ -193,8 +198,9 @@ Defaults: `WEB_HOST=127.0.0.1`, `WEB_PORT=4632` unless changed via settings or `
 ```
 - `model` — Claude model to use (`opus`, `sonnet`, `haiku`, `glm`, or full model ID). Empty string uses default.
 - `api` — API token used when `model` is `glm` (passed as `ANTHROPIC_AUTH_TOKEN` for that provider path).
-- `fallback.model` — always `"glm"`. Automatically used when your Claude token limit is hit. No other fallback model is supported.
-- `fallback.api` — API token for the GLM fallback model.
+- `fallback.model` — fallback model name (e.g. `"glm"`, `"gpt-4o"`, or any model ID). Automatically used when your Claude token limit is hit.
+- `fallback.api` — API token for the fallback provider.
+- `fallback.baseUrl` — base URL of an Anthropic-compatible endpoint for the fallback. GLM's URL is built-in (leave empty for GLM). For OpenAI models, point to an Anthropic-to-OpenAI proxy like LiteLLM (e.g. `"http://localhost:4000/v1"`).
 - `timezone` — canonical app timezone as UTC offset text (example: `UTC+1`, `UTC-5`, `UTC+03:30`). Heartbeat windows, jobs, and UI all use this timezone.
 - `heartbeat.enabled` — whether the recurring heartbeat runs
 - `heartbeat.interval` — minutes between heartbeat runs

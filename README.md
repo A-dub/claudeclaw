@@ -77,7 +77,7 @@ The setup wizard walks you through model, heartbeat, Telegram, Discord, and secu
 - **Time Awareness:** Message time prefixes help the agent understand delays and daily patterns.
 
 ### Reliability and Control
-- **GLM Fallback:** Automatically continue with GLM models if your primary limit is reached.
+- **Fallback Providers:** Automatically continue with GLM, OpenAI (via proxy), or any custom Anthropic-compatible endpoint if your primary limit is reached.
 - **Web Dashboard:** Manage jobs, monitor runs, and inspect logs in real time.
 - **Security Levels:** Four access levels from read-only to full system access.
 - **Model Selection:** Switch models based on your workload.

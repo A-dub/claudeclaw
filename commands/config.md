@@ -16,8 +16,9 @@ Parse `$ARGUMENTS` to identify what the user wants. If no arguments are given, s
    **General**
    - Model: (e.g. `opus`, `sonnet`, `haiku`, `glm` or "default")
    - API token: (first 5 chars + "..." or "not configured"; used when `model` is `glm`)
-   - Fallback model: (e.g. `glm`, `sonnet`, or "not configured")
+   - Fallback model: (e.g. `glm`, `gpt-4o`, `sonnet`, or "not configured")
    - Fallback API token: (first 5 chars + "..." or "not configured")
+   - Fallback base URL: (show URL or "not configured" / "built-in" for known providers like GLM)
    - Timezone: (e.g. `America/New_York` or "UTC")
 
    **Heartbeat**
@@ -139,7 +140,7 @@ Set or update the API token used when `model` is `glm`.
 Set the fallback model used when the primary model hits a rate limit.
 
 1. If fallback model name is in `$ARGUMENTS`, use it directly.
-2. Otherwise, use **AskUserQuestion**: "Which fallback model should ClaudeClaw use?" (header: "Fallback model", options: "glm (Recommended)", "sonnet", "haiku")
+2. Otherwise, use **AskUserQuestion**: "Which fallback model should ClaudeClaw use?" (header: "Fallback model", options: "glm (Recommended)", "OpenAI (via proxy)", "Custom provider", "sonnet")
 3. Read `.claude/claudeclaw/settings.json`.
 4. Set `fallback.model` to the chosen value (`""` for none).
 5. Write and confirm.
@@ -152,6 +153,16 @@ Set or clear the API token for the fallback model.
 2. Otherwise, use **AskUserQuestion**: "What API token should ClaudeClaw use for fallback model?" (header: "Fallback API token", options: let user type via Other)
 3. Read `.claude/claudeclaw/settings.json`.
 4. Set `fallback.api` to the new value.
+5. Write and confirm.
+
+### `fallback baseUrl <url>` / `fallback baseUrl`
+
+Set or clear the base URL for the fallback provider. GLM's URL is built-in (leave empty for GLM). For OpenAI models, point to an Anthropic-to-OpenAI proxy like LiteLLM (e.g. `http://localhost:4000/v1`).
+
+1. If URL is in `$ARGUMENTS`, use it directly.
+2. Otherwise, use **AskUserQuestion**: "What base URL should ClaudeClaw use for the fallback provider?" (header: "Fallback base URL", options: let user type via Other)
+3. Read `.claude/claudeclaw/settings.json`.
+4. Set `fallback.baseUrl` to the new value (empty string to clear).
 5. Write and confirm.
 
 ### `timezone <tz>` / `timezone`
@@ -287,8 +298,9 @@ Location: `.claude/claudeclaw/settings.json`
 |----------------------------|------------|------------------------------------------------|
 | `model`                    | string     | Claude model (`opus`, `sonnet`, `haiku`, `glm`, or full ID). Empty = default |
 | `api`                      | string     | API token used when model is `glm` (mapped to `ANTHROPIC_AUTH_TOKEN`) |
-| `fallback.model`           | string     | Backup model used automatically if primary run returns rate-limit text (recommend `glm` for provider diversity) |
+| `fallback.model`           | string     | Backup model name (e.g. `glm`, `gpt-4o`, or any model ID). Automatically used when primary hits rate limit |
 | `fallback.api`             | string     | API token used with `fallback.model` (optional) |
+| `fallback.baseUrl`         | string     | Base URL of Anthropic-compatible endpoint. GLM's is built-in (leave empty). For OpenAI, use a proxy URL |
 | `timezone`                 | string     | IANA timezone name (e.g. `America/New_York`)   |
 | `timezoneOffsetMinutes`    | number     | UTC offset in minutes (auto-resolved from timezone) |
 | `heartbeat.enabled`        | boolean    | Whether the recurring heartbeat runs           |
