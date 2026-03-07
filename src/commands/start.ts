@@ -318,12 +318,10 @@ export async function start(args: string[] = []) {
   await writePidFile();
   let web: WebServerHandle | null = null;
   let discordStopGateway: (() => void) | null = null;
-  let matrixStopFn: (() => void) | null = null;
   let mattermostStopFn: (() => void) | null = null;
 
   async function shutdown() {
     if (discordStopGateway) discordStopGateway();
-    if (matrixStopFn) matrixStopFn();
     if (mattermostStopFn) mattermostStopFn();
     if (web) web.stop();
     await teardownStatusline();
@@ -398,28 +396,6 @@ export async function start(args: string[] = []) {
 
   await initDiscord(currentSettings.discord.token);
   if (!discordToken) console.log("  Discord: not configured");
-
-  // --- Matrix ---
-  let matrixToken = "";
-
-  async function initMatrix(accessToken: string, homeserverUrl: string) {
-    if (accessToken && homeserverUrl && accessToken !== matrixToken) {
-      const { startMatrix, stopMatrix } = await import("./matrix");
-      if (matrixToken) stopMatrix();
-      startMatrix(debugFlag);
-      matrixStopFn = stopMatrix;
-      matrixToken = accessToken;
-      console.log(`[${ts()}] Matrix: enabled`);
-    } else if (!accessToken && matrixToken) {
-      if (matrixStopFn) matrixStopFn();
-      matrixStopFn = null;
-      matrixToken = "";
-      console.log(`[${ts()}] Matrix: disabled`);
-    }
-  }
-
-  await initMatrix(currentSettings.matrix.accessToken, currentSettings.matrix.homeserverUrl);
-  if (!matrixToken) console.log("  Matrix: not configured");
 
   // --- Mattermost ---
   let mattermostToken = "";
@@ -710,9 +686,6 @@ export async function start(args: string[] = []) {
       // Discord changes
       await initDiscord(newSettings.discord.token);
 
-      // Matrix changes
-      await initMatrix(newSettings.matrix.accessToken, newSettings.matrix.homeserverUrl);
-
       // Mattermost changes
       await initMattermost(newSettings.mattermost.token, newSettings.mattermost.serverUrl);
     } catch (err) {
@@ -734,7 +707,6 @@ export async function start(args: string[] = []) {
       security: currentSettings.security.level,
       telegram: !!currentSettings.telegram.token,
       discord: !!currentSettings.discord.token,
-      matrix: !!currentSettings.matrix.accessToken,
       mattermost: !!currentSettings.mattermost.token,
       startedAt: daemonStartedAt,
       web: {

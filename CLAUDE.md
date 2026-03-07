@@ -11,7 +11,7 @@
 - **What to call them:** Ad
 - **Pronouns:**
 - **Timezone:**
-- **Notes:** Building ClaudeClaw — integrations with iMessage, Discord, Telegram. Has `claudeclaw` and `claude-imessage` projects.
+- **Notes:** Building ClaudeClaw — integrations with iMessage, Discord, Telegram, Mattermost. Has `claudeclaw` and `claude-imessage` projects.
 
 ## Context
 

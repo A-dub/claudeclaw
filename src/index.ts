@@ -4,7 +4,6 @@ import { clear } from "./commands/clear";
 import { status } from "./commands/status";
 import { telegram } from "./commands/telegram";
 import { discord } from "./commands/discord";
-import { matrix } from "./commands/matrix";
 import { mattermost } from "./commands/mattermost";
 import { send } from "./commands/send";
 
@@ -25,8 +24,6 @@ if (command === "--stop-all") {
   telegram();
 } else if (command === "discord") {
   discord();
-} else if (command === "matrix") {
-  matrix();
 } else if (command === "mattermost") {
   mattermost();
 } else if (command === "send") {
