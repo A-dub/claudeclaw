@@ -28,6 +28,7 @@ const DEFAULT_SETTINGS: Settings = {
   telegram: { token: "", allowedUserIds: [] },
   discord: { token: "", allowedUserIds: [], alwaysRespondChannelIds: [] },
   matrix: { homeserverUrl: "", accessToken: "", allowedUserIds: [], alwaysRespondRoomIds: [] },
+  mattermost: { serverUrl: "", token: "", allowedUserIds: [], alwaysRespondChannelIds: [] },
   security: { level: "moderate", allowedTools: [], disallowedTools: [] },
   web: { enabled: false, host: "127.0.0.1", port: 4632 },
   stt: { baseUrl: "", model: "" },
@@ -65,6 +66,13 @@ export interface MatrixConfig {
   alwaysRespondRoomIds: string[]; // Rooms where the bot responds without mention
 }
 
+export interface MattermostConfig {
+  serverUrl: string; // e.g. https://mattermost.example.com
+  token: string; // Personal Access Token or Bot token
+  allowedUserIds: string[];
+  alwaysRespondChannelIds: string[]; // Channels where the bot responds without @mention
+}
+
 export type SecurityLevel =
   | "locked"
   | "strict"
@@ -87,6 +95,7 @@ export interface Settings {
   telegram: TelegramConfig;
   discord: DiscordConfig;
   matrix: MatrixConfig;
+  mattermost: MattermostConfig;
   security: SecurityConfig;
   web: WebConfig;
   stt: SttConfig;
@@ -181,6 +190,16 @@ function parseSettings(raw: Record<string, any>, discordUserIds?: string[]): Set
         : [],
       alwaysRespondRoomIds: Array.isArray(raw.matrix?.alwaysRespondRoomIds)
         ? raw.matrix.alwaysRespondRoomIds.map(String)
+        : [],
+    },
+    mattermost: {
+      serverUrl: typeof raw.mattermost?.serverUrl === "string" ? raw.mattermost.serverUrl.trim().replace(/\/+$/, "") : "",
+      token: typeof raw.mattermost?.token === "string" ? raw.mattermost.token.trim() : "",
+      allowedUserIds: Array.isArray(raw.mattermost?.allowedUserIds)
+        ? raw.mattermost.allowedUserIds.map(String)
+        : [],
+      alwaysRespondChannelIds: Array.isArray(raw.mattermost?.alwaysRespondChannelIds)
+        ? raw.mattermost.alwaysRespondChannelIds.map(String)
         : [],
     },
     security: {

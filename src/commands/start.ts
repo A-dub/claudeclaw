@@ -319,10 +319,12 @@ export async function start(args: string[] = []) {
   let web: WebServerHandle | null = null;
   let discordStopGateway: (() => void) | null = null;
   let matrixStopFn: (() => void) | null = null;
+  let mattermostStopFn: (() => void) | null = null;
 
   async function shutdown() {
     if (discordStopGateway) discordStopGateway();
     if (matrixStopFn) matrixStopFn();
+    if (mattermostStopFn) mattermostStopFn();
     if (web) web.stop();
     await teardownStatusline();
     await cleanupPidFile();
@@ -418,6 +420,28 @@ export async function start(args: string[] = []) {
 
   await initMatrix(currentSettings.matrix.accessToken, currentSettings.matrix.homeserverUrl);
   if (!matrixToken) console.log("  Matrix: not configured");
+
+  // --- Mattermost ---
+  let mattermostToken = "";
+
+  async function initMattermost(token: string, serverUrl: string) {
+    if (token && serverUrl && token !== mattermostToken) {
+      const { startMattermost, stopMattermost } = await import("./mattermost");
+      if (mattermostToken) stopMattermost();
+      startMattermost(debugFlag);
+      mattermostStopFn = stopMattermost;
+      mattermostToken = token;
+      console.log(`[${ts()}] Mattermost: enabled`);
+    } else if (!token && mattermostToken) {
+      if (mattermostStopFn) mattermostStopFn();
+      mattermostStopFn = null;
+      mattermostToken = "";
+      console.log(`[${ts()}] Mattermost: disabled`);
+    }
+  }
+
+  await initMattermost(currentSettings.mattermost.token, currentSettings.mattermost.serverUrl);
+  if (!mattermostToken) console.log("  Mattermost: not configured");
 
   function isAddrInUse(err: unknown): boolean {
     if (!err || typeof err !== "object") return false;
@@ -688,6 +712,9 @@ export async function start(args: string[] = []) {
 
       // Matrix changes
       await initMatrix(newSettings.matrix.accessToken, newSettings.matrix.homeserverUrl);
+
+      // Mattermost changes
+      await initMattermost(newSettings.mattermost.token, newSettings.mattermost.serverUrl);
     } catch (err) {
       console.error(`[${ts()}] Hot-reload error:`, err);
     }
@@ -708,6 +735,7 @@ export async function start(args: string[] = []) {
       telegram: !!currentSettings.telegram.token,
       discord: !!currentSettings.discord.token,
       matrix: !!currentSettings.matrix.accessToken,
+      mattermost: !!currentSettings.mattermost.token,
       startedAt: daemonStartedAt,
       web: {
         enabled: !!web,
