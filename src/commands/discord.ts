@@ -1,10 +1,10 @@
 import { ensureProjectClaudeMd, run, runUserMessage } from "../runner";
-import { getSettings, loadSettings, updateSettings } from "../config";
+import { getSettings, loadSettings } from "../config";
 import { resetSession } from "../sessions";
 import { transcribeAudioToText } from "../whisper";
+import { resolveSkillPrompt } from "../skills";
 import { mkdir } from "node:fs/promises";
-import { extname, join, basename } from "node:path";
-import { existsSync } from "node:fs";
+import { extname, join } from "node:path";
 
 // --- Discord API constants ---
 
@@ -155,53 +155,6 @@ async function discordApi<T>(
   return (await res.json()) as T;
 }
 
-/** Send a message with file attachments via multipart/form-data. */
-async function discordApiMultipart<T>(
-  token: string,
-  endpoint: string,
-  payload: Record<string, unknown>,
-  files: { path: string; name: string; description?: string }[],
-): Promise<T> {
-  const formData = new FormData();
-
-  // Add file attachments metadata to payload
-  const attachments = files.map((f, i) => ({
-    id: i,
-    filename: f.name,
-    description: f.description || "",
-  }));
-  payload.attachments = attachments;
-
-  formData.append("payload_json", JSON.stringify(payload));
-
-  for (let i = 0; i < files.length; i++) {
-    const file = Bun.file(files[i].path);
-    formData.append(`files[${i}]`, file, files[i].name);
-  }
-
-  const res = await fetch(`${DISCORD_API}${endpoint}`, {
-    method: "POST",
-    headers: { Authorization: `Bot ${token}` },
-    body: formData,
-  });
-
-  if (res.status === 429) {
-    const data = (await res.json()) as { retry_after: number };
-    const retryMs = Math.ceil(data.retry_after * 1000);
-    debugLog(`Rate limited on multipart POST ${endpoint}, retrying in ${retryMs}ms`);
-    await Bun.sleep(retryMs);
-    return discordApiMultipart(token, endpoint, payload, files);
-  }
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Discord API multipart POST ${endpoint}: ${res.status} ${res.statusText} ${text}`);
-  }
-
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
-}
-
 // --- Message sending ---
 
 async function sendMessage(
@@ -220,75 +173,6 @@ async function sendMessage(
     if (components && i + MAX_LEN >= normalized.length) {
       body.components = components;
     }
-    await discordApi(token, "POST", `/channels/${channelId}/messages`, body);
-  }
-}
-
-/** Send a rich message with optional embeds, components, polls, flags, and files. */
-async function sendRichMessage(
-  token: string,
-  channelId: string,
-  rich: DiscordRichMessage,
-): Promise<void> {
-  const hasRichContent = rich.embeds.length > 0 || rich.components.length > 0 || rich.poll || rich.flags || rich.files.length > 0;
-
-  // If no rich content, fall back to plain sendMessage
-  if (!hasRichContent) {
-    await sendMessage(token, channelId, rich.content);
-    return;
-  }
-
-  const MAX_LEN = 2000;
-  const content = rich.content;
-
-  // Build the payload
-  const buildPayload = (text?: string, includeRich = false): Record<string, unknown> => {
-    const body: Record<string, unknown> = {};
-    if (text) body.content = text;
-    if (includeRich) {
-      if (rich.embeds.length > 0) body.embeds = rich.embeds.slice(0, 10);
-      if (rich.components.length > 0) body.components = rich.components.slice(0, 5);
-      if (rich.poll) body.poll = rich.poll;
-      if (rich.flags) body.flags = rich.flags;
-    }
-    return body;
-  };
-
-  // If we have files, use multipart upload
-  if (rich.files.length > 0) {
-    if (content.length <= MAX_LEN) {
-      // Everything in one message
-      const payload = buildPayload(content || undefined, true);
-      await discordApiMultipart(token, `/channels/${channelId}/messages`, payload, rich.files.slice(0, 10));
-    } else {
-      // Send text chunks first, then files with rich content in last message
-      const chunks: string[] = [];
-      for (let i = 0; i < content.length; i += MAX_LEN) {
-        chunks.push(content.slice(i, i + MAX_LEN));
-      }
-      // Send all but last as plain text
-      for (let i = 0; i < chunks.length - 1; i++) {
-        await discordApi(token, "POST", `/channels/${channelId}/messages`, { content: chunks[i] });
-      }
-      // Last chunk with files + rich content
-      const payload = buildPayload(chunks[chunks.length - 1], true);
-      await discordApiMultipart(token, `/channels/${channelId}/messages`, payload, rich.files.slice(0, 10));
-    }
-    return;
-  }
-
-  // No files — JSON-only path
-  if (content.length <= MAX_LEN) {
-    const body = buildPayload(content || undefined, true);
-    await discordApi(token, "POST", `/channels/${channelId}/messages`, body);
-    return;
-  }
-
-  // Content is long — send text in chunks, attach rich elements to the last chunk
-  for (let i = 0; i < content.length; i += MAX_LEN) {
-    const chunk = content.slice(i, i + MAX_LEN);
-    const isLast = i + MAX_LEN >= content.length;
-    const body = buildPayload(chunk, isLast);
     await discordApi(token, "POST", `/channels/${channelId}/messages`, body);
   }
 }
@@ -344,174 +228,6 @@ function extractReactionDirective(text: string): { cleanedText: string; reaction
   return { cleanedText, reactionEmoji };
 }
 
-// --- Rich message directive extraction ---
-
-interface DiscordFileAttachment {
-  path: string;
-  name: string;
-  description?: string;
-}
-
-interface DiscordRichMessage {
-  content: string;
-  embeds: unknown[];
-  components: unknown[];
-  poll: unknown | null;
-  flags: number;
-  reactionEmoji: string | null;
-  files: DiscordFileAttachment[];
-}
-
-/**
- * Extract a JSON-containing directive like [embed:{...}] by counting bracket depth.
- * Returns all matches as { start, end, json } and handles nested brackets correctly.
- */
-function extractJsonDirectives(text: string, tag: string): { remaining: string; jsons: unknown[] } {
-  const jsons: unknown[] = [];
-  const prefix = `[${tag}:`;
-  let result = "";
-  let i = 0;
-
-  while (i < text.length) {
-    const lower = text.slice(i, i + prefix.length).toLowerCase();
-    if (lower === prefix.toLowerCase()) {
-      // Found directive start — find the JSON by counting brackets
-      const jsonStart = i + prefix.length;
-      let depth = 0;
-      let inString = false;
-      let escaped = false;
-      let j = jsonStart;
-      let foundJson = false;
-
-      while (j < text.length) {
-        const ch = text[j];
-        if (escaped) {
-          escaped = false;
-          j++;
-          continue;
-        }
-        if (ch === "\\") {
-          escaped = true;
-          j++;
-          continue;
-        }
-        if (ch === '"') {
-          inString = !inString;
-          j++;
-          continue;
-        }
-        if (inString) {
-          j++;
-          continue;
-        }
-        if (ch === "{" || ch === "[") depth++;
-        if (ch === "}" || ch === "]") {
-          depth--;
-          if (depth === 0) {
-            // End of JSON object/array — expect closing ]
-            const jsonStr = text.slice(jsonStart, j + 1);
-            // Skip optional whitespace then the closing ]
-            let k = j + 1;
-            while (k < text.length && (text[k] === " " || text[k] === "\t")) k++;
-            if (k < text.length && text[k] === "]") {
-              try {
-                jsons.push(JSON.parse(jsonStr));
-                i = k + 1;
-                foundJson = true;
-              } catch {
-                debugLog(`Failed to parse ${tag} JSON: ${jsonStr.slice(0, 100)}`);
-                i = k + 1;
-                foundJson = true;
-              }
-            }
-            break;
-          }
-        }
-        j++;
-      }
-
-      if (!foundJson) {
-        // Couldn't parse — keep the text as-is
-        result += text[i];
-        i++;
-      }
-    } else {
-      result += text[i];
-      i++;
-    }
-  }
-
-  return { remaining: result, jsons };
-}
-
-/**
- * Parse rich message directives from response text.
- * Uses bracket-depth parsing for JSON directives to handle nested arrays/objects.
- */
-function extractRichMessage(text: string): DiscordRichMessage {
-  const embeds: unknown[] = [];
-  const components: unknown[] = [];
-  const files: DiscordFileAttachment[] = [];
-  let poll: unknown | null = null;
-  let flags = 0;
-  let reactionEmoji: string | null = null;
-
-  // First pass: extract JSON directives using bracket-depth parser
-  let remaining = text;
-
-  const embedResult = extractJsonDirectives(remaining, "embed");
-  remaining = embedResult.remaining;
-  embeds.push(...embedResult.jsons);
-
-  const compResult = extractJsonDirectives(remaining, "components");
-  remaining = compResult.remaining;
-  for (const c of compResult.jsons) {
-    if (Array.isArray(c)) components.push(...c);
-    else components.push(c);
-  }
-
-  const pollResult = extractJsonDirectives(remaining, "poll");
-  remaining = pollResult.remaining;
-  if (pollResult.jsons.length > 0) poll = pollResult.jsons[0];
-
-  // Second pass: simple regex directives (no nested brackets)
-  let cleaned = remaining
-    // React directive
-    .replace(/\[react:([^\]\r\n]+)\]/gi, (_match, raw) => {
-      const candidate = String(raw).trim();
-      if (!reactionEmoji && candidate) reactionEmoji = candidate;
-      return "";
-    })
-    // Flags directive
-    .replace(/\[flags:([^\]\r\n]+)\]/gi, (_match, raw) => {
-      const flagStr = String(raw).trim().toUpperCase();
-      if (flagStr.includes("SUPPRESS_NOTIFICATIONS")) flags |= 1 << 12;
-      if (flagStr.includes("SUPPRESS_EMBEDS")) flags |= 1 << 2;
-      return "";
-    })
-    // File directive — [file:/path/to/image.png] or [file:/path/to/file.pdf "description"]
-    .replace(/\[file:([^\]\r\n]+)\]/gi, (_match, raw) => {
-      const trimmed = String(raw).trim();
-      const descMatch = trimmed.match(/^(.+?)\s+"([^"]+)"$/);
-      const filePath = descMatch ? descMatch[1].trim() : trimmed;
-      const description = descMatch ? descMatch[2] : undefined;
-      if (existsSync(filePath)) {
-        files.push({ path: filePath, name: basename(filePath), description });
-      } else {
-        debugLog(`File not found for attachment: ${filePath}`);
-      }
-      return "";
-    });
-
-  // Clean up whitespace
-  cleaned = cleaned
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  return { content: cleaned, embeds, components, poll, flags, reactionEmoji, files };
-}
-
 // --- Guild trigger logic ---
 
 function guildTriggerReason(message: DiscordMessage): string | null {
@@ -524,9 +240,9 @@ function guildTriggerReason(message: DiscordMessage): string | null {
   // Mention in content (fallback)
   if (botUserId && message.content.includes(`<@${botUserId}>`)) return "mention_in_content";
 
-  // Always-respond channels (no mention required)
+  // Listen channel (respond to all messages, no mention needed)
   const config = getSettings().discord;
-  if (config.alwaysRespondChannelIds.includes(message.channel_id)) return "always_respond_channel";
+  if (config.listenChannels.includes(message.channel_id)) return "listen_channel";
 
   return null;
 }
@@ -570,28 +286,13 @@ async function registerSlashCommands(token: string): Promise<void> {
 
   const commands = [
     {
+      name: "start",
+      description: "Show welcome message and usage instructions",
+      type: 1,
+    },
+    {
       name: "reset",
       description: "Reset the global session for a fresh start",
-      type: 1,
-    },
-    {
-      name: "listen",
-      description: "Always respond in this channel without @mention",
-      type: 1,
-    },
-    {
-      name: "unlisten",
-      description: "Stop auto-responding in this channel (require @mention again)",
-      type: 1,
-    },
-    {
-      name: "stop",
-      description: "Stop the ClaudeClaw daemon gracefully",
-      type: 1,
-    },
-    {
-      name: "restart",
-      description: "Restart the ClaudeClaw daemon",
       type: 1,
     },
   ];
@@ -717,9 +418,30 @@ async function handleMessageCreate(token: string, message: DiscordMessage): Prom
       }
     }
 
+    // Skill routing: detect slash commands and resolve to SKILL.md prompts
+    const command = cleanContent.startsWith("/") ? cleanContent.trim().split(/\s+/, 1)[0].toLowerCase() : null;
+    let skillContext: string | null = null;
+    if (command) {
+      try {
+        skillContext = await resolveSkillPrompt(command);
+        if (skillContext) {
+          debugLog(`Skill resolved for ${command}: ${skillContext.length} chars`);
+        }
+      } catch (err) {
+        debugLog(`Skill resolution failed for ${command}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
     // Build prompt (same pattern as Telegram)
     const promptParts = [`[Discord from ${label}]`];
-    if (cleanContent.trim()) promptParts.push(`Message: ${cleanContent}`);
+    if (skillContext) {
+      const args = cleanContent.trim().slice(command!.length).trim();
+      promptParts.push(`<command-name>${command}</command-name>`);
+      promptParts.push(skillContext);
+      if (args) promptParts.push(`User arguments: ${args}`);
+    } else if (cleanContent.trim()) {
+      promptParts.push(`Message: ${cleanContent}`);
+    }
     if (imagePath) {
       promptParts.push(`Image path: ${imagePath}`);
       promptParts.push("The user attached an image. Inspect this image file directly before answering.");
@@ -741,17 +463,13 @@ async function handleMessageCreate(token: string, message: DiscordMessage): Prom
     if (result.exitCode !== 0) {
       await sendMessage(config.token, channelId, `Error (exit ${result.exitCode}): ${result.stderr || "Unknown error"}`);
     } else {
-      const rich = extractRichMessage(result.stdout || "");
-      if (rich.reactionEmoji) {
-        await sendReaction(config.token, channelId, message.id, rich.reactionEmoji).catch((err) => {
+      const { cleanedText, reactionEmoji } = extractReactionDirective(result.stdout || "");
+      if (reactionEmoji) {
+        await sendReaction(config.token, channelId, message.id, reactionEmoji).catch((err) => {
           console.error(`[Discord] Failed to send reaction for ${label}: ${err instanceof Error ? err.message : err}`);
         });
       }
-      if (!rich.content && rich.embeds.length === 0 && !rich.poll) {
-        await sendMessage(config.token, channelId, "(empty response)");
-      } else {
-        await sendRichMessage(config.token, channelId, rich);
-      }
+      await sendMessage(config.token, channelId, cleanedText || "(empty response)");
     }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -775,85 +493,18 @@ async function handleInteractionCreate(token: string, interaction: DiscordIntera
 
   // Slash commands (type 2)
   if (interaction.type === 2 && interaction.data?.name) {
+    if (interaction.data.name === "start") {
+      await respondToInteraction(interaction, {
+        content: "Hello! Send me a message and I'll respond using Claude.\nUse `/reset` to start a fresh session.",
+      });
+      return;
+    }
+
     if (interaction.data.name === "reset") {
       await resetSession();
       await respondToInteraction(interaction, {
         content: "Global session reset. Next message starts fresh.",
       });
-      return;
-    }
-
-    if (interaction.data.name === "listen") {
-      const channelId = interaction.channel_id;
-      if (!channelId) {
-        await respondToInteraction(interaction, { content: "Could not determine channel.", flags: 64 });
-        return;
-      }
-      const config = getSettings().discord;
-      if (config.alwaysRespondChannelIds.includes(channelId)) {
-        await respondToInteraction(interaction, { content: "Already listening in this channel." });
-        return;
-      }
-      await updateSettings((raw) => {
-        if (!Array.isArray(raw.discord?.alwaysRespondChannelIds)) {
-          raw.discord = raw.discord || {};
-          raw.discord.alwaysRespondChannelIds = [];
-        }
-        raw.discord.alwaysRespondChannelIds.push(channelId);
-      });
-      await respondToInteraction(interaction, {
-        content: "Now listening in this channel — no @mention needed.",
-      });
-      return;
-    }
-
-    if (interaction.data.name === "unlisten") {
-      const channelId = interaction.channel_id;
-      if (!channelId) {
-        await respondToInteraction(interaction, { content: "Could not determine channel.", flags: 64 });
-        return;
-      }
-      const config = getSettings().discord;
-      if (!config.alwaysRespondChannelIds.includes(channelId)) {
-        await respondToInteraction(interaction, { content: "Not listening in this channel." });
-        return;
-      }
-      await updateSettings((raw) => {
-        if (Array.isArray(raw.discord?.alwaysRespondChannelIds)) {
-          raw.discord.alwaysRespondChannelIds = raw.discord.alwaysRespondChannelIds.filter(
-            (id: string) => String(id) !== channelId,
-          );
-        }
-      });
-      await respondToInteraction(interaction, {
-        content: "Stopped listening. @mention or reply required again.",
-      });
-      return;
-    }
-
-    if (interaction.data.name === "stop") {
-      await respondToInteraction(interaction, { content: "Shutting down... goodbye!" });
-      console.log(`[Discord] /stop issued by ${actorId}`);
-      setTimeout(() => process.kill(process.pid, "SIGTERM"), 500);
-      return;
-    }
-
-    if (interaction.data.name === "restart") {
-      await respondToInteraction(interaction, { content: "Restarting..." });
-      console.log(`[Discord] /restart issued by ${actorId}`);
-      const entryPoint = join(import.meta.dir, "..", "index.ts");
-      const logPath = join(process.cwd(), ".claude", "claudeclaw", "logs", "daemon.log");
-      const logFile = Bun.file(logPath);
-      const child = Bun.spawn(
-        [process.execPath, "run", entryPoint, "start", "--web", "--replace-existing"],
-        {
-          cwd: process.cwd(),
-          stdin: "ignore",
-          stdout: logFile,
-          stderr: logFile,
-        },
-      );
-      child.unref();
       return;
     }
 
@@ -1179,14 +830,6 @@ process.on("SIGTERM", () => {
 process.on("SIGINT", () => {
   stopGateway();
 });
-process.on("unhandledRejection", (err) => {
-  console.error("[Discord] Unhandled rejection:", err);
-});
-process.on("uncaughtException", (err) => {
-  console.error("[Discord] Uncaught exception:", err);
-  stopGateway();
-  process.exit(1);
-});
 
 /** Start gateway connection in-process (called by start.ts when token is configured) */
 export function startGateway(debug = false): void {
@@ -1196,6 +839,9 @@ export function startGateway(debug = false): void {
   running = true;
   console.log("Discord bot started (gateway)");
   console.log(`  Allowed users: ${config.allowedUserIds.length === 0 ? "all" : config.allowedUserIds.join(", ")}`);
+  if (config.listenChannels.length > 0) {
+    console.log(`  Listen channels: ${config.listenChannels.join(", ")}`);
+  }
   if (discordDebug) console.log("  Debug: enabled");
 
   (async () => {
