@@ -123,3 +123,11 @@ The setup wizard walks you through model, heartbeat, Telegram, Discord, and secu
 
 ### Cool UI to Manage and Check Your ClaudeClaw
 ![Cool UI to manage and check your ClaudeClaw](images/dashboard.png)
+
+## Contributors
+
+Thanks for helping make ClaudeClaw better.
+
+<a href="https://github.com/moazbuilds/claudeclaw/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=moazbuilds/claudeclaw" />
+</a>
